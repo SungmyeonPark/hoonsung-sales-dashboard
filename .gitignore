@@ -1,0 +1,8 @@
+.env
+*.xls
+*.xlsx
+*.csv
+*.json
+__pycache__/
+.DS_Store
+.streamlit/secrets.toml

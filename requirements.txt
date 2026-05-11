@@ -1,0 +1,11 @@
+streamlit
+pandas
+plotly
+openpyxl
+xlrd
+lxml
+html5lib
+beautifulsoup4
+google-cloud-storage
+google-api-python-client
+google-auth
