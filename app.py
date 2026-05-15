@@ -7,14 +7,14 @@ from io import BytesIO
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-
+from dateutil.relativedelta import relativedelta
 
 st.set_page_config(
-    page_title="우리은행 가게 매출 분석 대시보드",
+    page_title="훈성 매출 분석 대시보드",
     layout="wide"
 )
 
-st.title("우리은행 거래내역 기반 요식업 매출 분석 대시보드")
+st.title("훈성 매출 분석 대시보드")
 
 
 # --------------------------------------------------
@@ -556,6 +556,133 @@ def filter_by_date(df, start_date, end_date):
         (df["거래일"] <= end_date)
     ].copy()
 
+def format_short_date(d):
+    return d.strftime("%y-%m-%d")
+
+
+def format_comparison_label(name, start_date, end_date):
+    return f"{name}<br>{format_short_date(start_date)} ~ {format_short_date(end_date)}"
+
+
+def get_month_end(d):
+    next_month = d.replace(day=28) + timedelta(days=4)
+    return next_month - timedelta(days=next_month.day)
+
+
+def build_recent_month_options(min_date, max_date):
+    """
+    Build monthly dropdown options within the recent 1-year window.
+    Most recent month appears first.
+    """
+
+    start_limit = max(min_date, max_date - timedelta(days=365))
+
+    month_starts = pd.date_range(
+        start=start_limit.replace(day=1),
+        end=max_date.replace(day=1),
+        freq="MS"
+    )
+
+    options = []
+
+    for month_start_ts in month_starts:
+        month_start = month_start_ts.date()
+        month_end = get_month_end(month_start)
+
+        actual_start = max(month_start, min_date)
+        actual_end = min(month_end, max_date)
+
+        if actual_start <= actual_end:
+            options.append({
+                "label": f"{actual_start.strftime('%Y년 %m월')} ({format_short_date(actual_start)} ~ {format_short_date(actual_end)})",
+                "start": actual_start,
+                "end": actual_end
+            })
+
+    return list(reversed(options))
+
+
+def build_recent_week_options(min_date, max_date):
+    """
+    Build weekly dropdown options within the recent 1-year window.
+    Week is Monday to Sunday.
+    Most recent week appears first.
+    """
+
+    start_limit = max(min_date, max_date - timedelta(days=365))
+
+    # Monday of the max_date week
+    current_week_start = max_date - timedelta(days=max_date.weekday())
+
+    options = []
+
+    week_start = current_week_start
+
+    while week_start >= start_limit - timedelta(days=6):
+        week_end = week_start + timedelta(days=6)
+
+        actual_start = max(week_start, start_limit, min_date)
+        actual_end = min(week_end, max_date)
+
+        if actual_start <= actual_end:
+            options.append({
+                "label": f"{format_short_date(actual_start)} ~ {format_short_date(actual_end)}",
+                "start": actual_start,
+                "end": actual_end
+            })
+
+        week_start = week_start - timedelta(days=7)
+
+    return options
+
+
+def summarize_period(df, start_date, end_date, label):
+    period_df = filter_by_date(df, start_date, end_date)
+
+    return {
+        "비교기간": label,
+        "시작일": start_date,
+        "종료일": end_date,
+        "영업매출": period_df["영업매출"].sum(),
+        "비용": period_df["비용"].sum(),
+        "순현금흐름": period_df["순현금흐름"].sum(),
+        "거래건수": len(period_df)
+    }
+
+
+def calculate_change_rate(current_value, comparison_value):
+    if comparison_value == 0:
+        return None
+
+    return (current_value - comparison_value) / comparison_value
+
+def summarize_period(df, start_date, end_date, label):
+    """
+    Summarize sales, expense, and cash flow for a selected period.
+    """
+
+    period_df = filter_by_date(df, start_date, end_date)
+
+    return {
+        "비교기간": label,
+        "시작일": start_date,
+        "종료일": end_date,
+        "영업매출": period_df["영업매출"].sum(),
+        "비용": period_df["비용"].sum(),
+        "순현금흐름": period_df["순현금흐름"].sum(),
+        "거래건수": len(period_df)
+    }
+
+
+def calculate_change_rate(current_value, comparison_value):
+    """
+    Calculate percentage change.
+    """
+
+    if comparison_value == 0:
+        return None
+
+    return (current_value - comparison_value) / comparison_value
 
 def make_korean_weekday(df):
     weekday_map = {
@@ -902,6 +1029,218 @@ if uploaded_files:
                 st.plotly_chart(fig_quarterly, use_container_width=True)
             else:
                 st.info("선택된 기간에 해당하는 분기별 데이터가 없습니다.")
+
+        # --------------------------------------------------
+        # 3. Previous month / previous year comparison
+        # --------------------------------------------------
+
+        st.divider()
+        st.header("3. 전월 / 전년 동월 비교")
+
+        comparison_type = st.radio(
+            "비교 기간 선택 방식",
+            [ "월별", "주별", "직접 입력"],
+            horizontal=True,
+            key="comparison_type"
+        )
+
+        if comparison_type == "직접 입력":
+            c1, c2 = st.columns(2)
+
+            with c1:
+                comparison_start = st.date_input(
+                    "비교 시작일",
+                    value=data_min_date,
+                    min_value=data_min_date,
+                    max_value=data_max_date,
+                    key="comparison_direct_start"
+                )
+
+            with c2:
+                comparison_end = st.date_input(
+                    "비교 종료일",
+                    value=data_max_date,
+                    min_value=data_min_date,
+                    max_value=data_max_date,
+                    key="comparison_direct_end"
+                )
+
+            if comparison_start > comparison_end:
+                st.warning("시작일이 종료일보다 늦어 날짜를 자동으로 바꿨습니다.")
+                comparison_start, comparison_end = comparison_end, comparison_start
+
+        elif comparison_type == "월별":
+            month_options = build_recent_month_options(data_min_date, data_max_date)
+
+            selected_period = st.selectbox(
+                "최근 1년 월 선택",
+                month_options,
+                format_func=lambda x: x["label"],
+                key="comparison_month_select"
+            )
+
+            comparison_start = selected_period["start"]
+            comparison_end = selected_period["end"]
+
+        else:
+            week_options = build_recent_week_options(data_min_date, data_max_date)
+
+            selected_period = st.selectbox(
+                "최근 1년 주 선택",
+                week_options,
+                format_func=lambda x: x["label"],
+                key="comparison_week_select"
+            )
+
+            comparison_start = selected_period["start"]
+            comparison_end = selected_period["end"]
+
+        previous_month_start = comparison_start - relativedelta(months=1)
+        previous_month_end = comparison_end - relativedelta(months=1)
+
+        previous_year_start = comparison_start - relativedelta(years=1)
+        previous_year_end = comparison_end - relativedelta(years=1)
+
+        current_label = format_comparison_label(
+            "기준",
+            comparison_start,
+            comparison_end
+        )
+
+        previous_month_label = format_comparison_label(
+            "전월",
+            previous_month_start,
+            previous_month_end
+        )
+
+        previous_year_label = format_comparison_label(
+            "전년 동월",
+            previous_year_start,
+            previous_year_end
+        )
+
+        current_summary = summarize_period(
+            base_df,
+            comparison_start,
+            comparison_end,
+            current_label
+        )
+
+        previous_month_summary = summarize_period(
+            base_df,
+            previous_month_start,
+            previous_month_end,
+            previous_month_label
+        )
+
+        previous_year_summary = summarize_period(
+            base_df,
+            previous_year_start,
+            previous_year_end,
+            previous_year_label
+        )
+
+        comparison_df = pd.DataFrame([
+            current_summary,
+            previous_month_summary,
+            previous_year_summary
+        ])
+
+        comparison_metric = st.radio(
+            "비교할 지표",
+            ["영업매출", "비용", "순현금흐름"],
+            horizontal=True,
+            key="comparison_metric"
+        )
+
+        comparison_color_map = {
+            current_label: "skyblue",
+            previous_month_label: "orange",
+            previous_year_label: "lightgreen"
+        }
+
+        fig_comparison = px.bar(
+            comparison_df,
+            x="비교기간",
+            y=comparison_metric,
+            text=comparison_metric,
+            labels={
+                "비교기간": "비교기간",
+                comparison_metric: "금액"
+            },
+            color="비교기간",
+            color_discrete_map=comparison_color_map
+        )
+
+        fig_comparison.update_traces(
+            texttemplate="%{text:,.0f}",
+            textposition="outside"
+        )
+
+        fig_comparison.update_layout(
+            showlegend=False,
+            yaxis_title="금액",
+            xaxis_title=None,
+            xaxis_tickangle=0
+        )
+
+        st.plotly_chart(fig_comparison, use_container_width=True)
+
+        current_value = current_summary[comparison_metric]
+        previous_month_value = previous_month_summary[comparison_metric]
+        previous_year_value = previous_year_summary[comparison_metric]
+
+        mom_change = calculate_change_rate(current_value, previous_month_value)
+        yoy_change = calculate_change_rate(current_value, previous_year_value)
+
+        st.subheader("증감률 요약")
+
+        m1, m2, m3 = st.columns(3)
+
+        m1.metric(
+            "기준",
+            f"{current_value:,.0f}원"
+        )
+
+        if mom_change is None:
+            m2.metric(
+                "전월 대비",
+                "비교 불가",
+                delta="전월 데이터 없음"
+            )
+        else:
+            m2.metric(
+                "전월 대비",
+                f"{current_value - previous_month_value:,.0f}원",
+                delta=f"{mom_change:.1%}"
+            )
+
+        if yoy_change is None:
+            m3.metric(
+                "전년 동월 대비",
+                "비교 불가",
+                delta="전년 데이터 없음"
+            )
+        else:
+            m3.metric(
+                "전년 동월 대비",
+                f"{current_value - previous_year_value:,.0f}원",
+                delta=f"{yoy_change:.1%}"
+            )
+
+        st.subheader("비교 기간 상세")
+
+        comparison_display_df = comparison_df.copy()
+
+        comparison_display_df["비교기간"] = comparison_display_df["비교기간"].str.replace("<br>", "\n", regex=False)
+
+        for col in ["영업매출", "비용", "순현금흐름"]:
+            comparison_display_df[col] = comparison_display_df[col].map(lambda x: f"{x:,.0f}원")
+
+        st.dataframe(
+            comparison_display_df,
+            use_container_width=True
+        )
 
         # --------------------------------------------------
         # 4. Weekday chart
