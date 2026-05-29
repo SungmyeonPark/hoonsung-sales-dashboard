@@ -594,9 +594,6 @@ def classify_transaction(row):
     if contains_any(text, RENT_KEYWORDS):
         return "임대료", "월세"
 
-    if looks_like_staff_transfer(row, text):
-        return "인건비", "급여/알바비"
-
     if contains_any(text, ALCOHOL_KEYWORDS):
         return "매출원가", "주류 매입"
 
@@ -632,6 +629,9 @@ def classify_transaction(row):
 
     if contains_any(text, PLATFORM_FEE_KEYWORDS):
         return "수수료", "결제/플랫폼 수수료"
+    
+    if looks_like_staff_transfer(row, text):
+        return "인건비", "급여/알바비"
 
     return "기타", "미분류"
 
