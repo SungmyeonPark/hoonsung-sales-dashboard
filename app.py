@@ -891,13 +891,36 @@ try:
 
     st.info("Google Drive 폴더에서 거래내역 파일을 자동으로 불러옵니다.")
 
-    refresh_cache = st.button("데이터 새로고침")
+    # --------------------------------------------------
+    # Safe cache refresh
+    # --------------------------------------------------
+
+    if "refresh_in_progress" not in st.session_state:
+        st.session_state.refresh_in_progress = False
+
+    refresh_cache = st.button(
+        "데이터 새로고침",
+        disabled=st.session_state.refresh_in_progress
+    )
 
     if refresh_cache:
-        st.cache_data.clear()
+        st.session_state.refresh_in_progress = True
+
+        try:
+            # 필요한 캐시만 개별적으로 삭제합니다.
+            list_drive_transaction_files.clear()
+            download_drive_file_cached.clear()
+            load_and_prepare_transactions_from_drive.clear()
+
+        except Exception:
+            # 혹시 개별 clear가 실패하면 전체 data cache를 삭제합니다.
+            st.cache_data.clear()
+
+        st.warning("데이터 캐시를 비웠습니다. 잠시 후 다시 불러옵니다.")
         st.rerun()
 
     df, loaded_file_names = load_and_prepare_transactions_from_drive(folder_id)
+    st.session_state.refresh_in_progress = False
 
     if df.empty:
         st.warning("Google Drive 폴더에 .xls, .xlsx, .csv 거래내역 파일이 없습니다.")
